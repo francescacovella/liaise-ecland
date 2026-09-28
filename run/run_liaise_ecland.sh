@@ -480,6 +480,12 @@ for forcing_file in "${forcing_files[@]}"; do
         previous_restart_cmf="$final_restart_cmf"
         echo "Saved annual CaMa-Flood restart: $previous_restart_cmf"
     fi
+
+    # Outputs and restarts are now safely stored outside the per-year work
+    # directory. Remove the duplicate working files before starting the next
+    # year so a long chain does not consume twice the required disk space.
+    rm -rf "$year_work"
+    echo "Cleaned annual work directory: $year_work"
 done
 
 echo
