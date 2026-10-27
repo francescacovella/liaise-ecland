@@ -43,6 +43,7 @@ init_clim/get_init_clim.sh
 
 ### 3. Get the forcing
 
+Make sure you have enough space on the partition before starting this step.
 Two sources, one layout. Both write raw yearly files `forcing/WFDE5_CRU_GPCC/WFDE5_CRU_GPCC_<year>.nc`:
 
 ```bash
@@ -63,9 +64,9 @@ cd ..
 
 ```bash
 ls forcing/WFDE5_CRU_GPCC_ecland | wc -l    # 37
-```
+``` 
 
-Each CDS request downloads a global file (up to ~12 GB) and clips it on assembly; queue time dominates, transient `502`s are retried automatically. `forcing/scratch_mirror.sh` runs the preparation on `$SCRATCH` and pulls back only the finished `WFDE5_CRU_GPCC_ecland/`. Inside ECMWF the prepared archive is already on `/perm/pad/liaise-ecland/forcing/` and on `sites.ecmwf.int/pad/liaise/forcing/`.
+Each CDS request downloads a global file (up to ~12 GB) and clips it on assembly; queue time dominates, transient `502`s are retried automatically. `forcing/scratch_mirror.sh` runs the preparation on `$SCRATCH` and pulls back only the finished `WFDE5_CRU_GPCC_ecland/`. Alternatively you can copy the files from a colleague's repositor: Inside ECMWF the prepared archive is already on `/perm/pad/liaise-ecland/forcing/` and on `sites.ecmwf.int/pad/liaise/forcing/`.
 
 ### 4. Choose a namelist
 
