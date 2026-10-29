@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 """Check water-balance closure of raw ecLand output, per site and network-wide.
 
-Imported unmodified from the sibling plumber2-ecland repo's
-scripts/check_water_budget.py -- works unchanged against this repo's own
-run/output/<year>/o_*.nc layout, since each year subdirectory is structurally
-identical to one PLUMBER2 "site": pass --output-dir run/output (or
-run/output_depthtrilogy) and each year is scored as its own row.
+Imported from the sibling plumber2-ecland repo's scripts/check_water_budget.py
+and adapted for this repo's gridded run/output/<year>/o_*.nc layout: each year
+subdirectory is one "site" (pass --output-dir run/output, or
+run/output_depthtrilogy), and within it the closure is computed at every land
+grid point. Sea cells (the 1e20 fill value) are masked out; a single-site
+PLUMBER2 run is the 1 x 1 case of the same calculation.
 
-For each site, integrates the terms in o_wat.nc over the whole run and reports
-the residual of
+For each land point, integrates the terms in o_wat.nc over the whole run
+(all positive when water enters the land) and reports the residual of
 
-    Rainf + Snowf + Evap + Qs + Qsb
+    Rainf + Snowf + Evap + Qs + Qsb - EWater
       - DelIntercept - DelSoilMoist - DelSWE - DelAquifer
+
+EWater (from o_eva.nc, zero if absent) is the evaporation from ecLand's
+open-water tiles -- tile 1 (sea water) and tile 9 (lake). Those are unlimited
+reservoirs, so that part of Evap drains no land store and is taken out of the
+balance. Without it, the 1988 LIAISE residual follows lake cover (correlation
+-0.98) and reaches -53 mm/yr; with it, every point closes within 6.8 mm/yr.
 
 (Qs and Qsb are ADDED here, matching ecLand's own output sign convention --
 subtracting them instead manufactures a spurious residual of exactly 2x their
@@ -30,10 +37,13 @@ diverted from Qsb -- see ecland 2470a28 for the cold-start case this
 diagnostic caught, and the commit's note on the smaller within-run case that
 is not yet fixed.
 
-Exits non-zero if any site's residual exceeds --tol-frac of its precipitation
-(default 1%) AND --tol-abs in absolute terms (default 5 mm/yr) -- both must be
-exceeded, so a bone-dry site's tiny precipitation total does not trip the
-check on a fraction of nearly nothing. Intended to run right after a raw
+Exits non-zero if any land point's residual exceeds --tol-frac of its
+precipitation (default 1%) AND --tol-abs in absolute terms (default 5 mm/yr)
+-- both must be exceeded, so a bone-dry point's tiny precipitation total does
+not trip the check on a fraction of nearly nothing -- or if the residual is NaN
+at any land point (a NaN never counts as a pass). The per-site table
+(--out-csv) gives land-point means plus the worst point and its lat/lon;
+--per-point-csv writes the residual at every land point. Intended to run right after a raw
 ecLand run, before or alongside postproc_plumber2.py -- it reads o_wat.nc
 directly, and DelSoilMoist/DelSWE/DelIntercept/Qrec/Qcap/DelAquifer do not
 survive into the postprocessed PLUMBER2-schema files.

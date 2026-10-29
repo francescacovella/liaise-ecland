@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
 """Check surface energy-balance closure of raw ecLand output, per site and network-wide.
 
-Imported unmodified from the sibling plumber2-ecland repo's
-scripts/check_energy_budget.py -- works unchanged against this repo's own
-run/output/<year>/o_*.nc layout, since each year subdirectory is structurally
-identical to one PLUMBER2 "site": pass --output-dir run/output (or
-run/output_depthtrilogy) and each year is scored as its own row.
+Imported from the sibling plumber2-ecland repo's scripts/check_energy_budget.py
+and adapted for this repo's gridded run/output/<year>/o_*.nc layout: each year
+subdirectory is one "site" (pass --output-dir run/output, or
+run/output_depthtrilogy), and within it the closure is computed at every land
+grid point. Sea cells (the 1e20 fill value) are masked out; a single-site
+PLUMBER2 run is the 1 x 1 case of the same calculation.
 
-For each site, integrates over the whole run the terms in o_efl.nc's own sign
-convention (Qh, Qle and Qg are positive DOWNWARD here -- verified empirically:
-SWnet+LWnet+Qh+Qle+Qg closes to <1e-4 W/m2 at every timestep on a snow-free
-site -- this is NOT the ALMA upward-positive convention the PLUMBER2-schema
-postprocessed files use):
+For each land point, integrates over the whole run the terms in o_efl.nc's own
+sign convention (all fluxes positive DOWNWARD, i.e. toward the surface -- so
+Qh and Qle are negative on average; this is NOT the ALMA upward-positive
+convention the PLUMBER2-schema postprocessed files use):
 
-    SWnet + LWnet + Qh + Qle  +  DelSoilHeat + DelColdCont
+    residual = (SWnet + LWnet + Qh + Qle)  -  dE_soil/dt  -  dE_snow/dt
 
-and reports the run-mean residual in W/m2. Rearranged, this is checking that
-the energy available at the surface after turbulent exchange is fully
-accounted for by the change in soil + snow internal energy content.
+and reports the run-mean residual in W/m2. The first term is the energy that
+enters the ground; dE_soil and dE_snow are the increases in soil and snow
+heat content between the first and last output step. Rearranged, this is
+checking that the energy available at the surface after turbulent exchange is
+fully accounted for by the change in soil + snow internal energy content.
 
 DelSoilHeat and DelColdCont are read from o_efl.nc if present, but in every
 build/config checked so far they are identically zero: DelSoilHeat's source
@@ -72,7 +74,17 @@ to shift Qh/Qle/Qg by far more than a few W/m2 -- e.g. the interception bug
 fixed this session shifted the water budget by mm/yr-scale amounts, not the
 sub-percent noise floor this script is tuned around).
 
-Exits non-zero if any site's |residual| exceeds --tol-wm2 (default 5.0 W/m2).
+Because of that approximation, a point that carries snow at any time in the
+run ("snow point") is reported separately (n_snow_points,
+worst_snow_residual_wm2) but is not judged against the tolerance. On the
+1988 LIAISE year, snow points reach 6 W/m2 while snow-free points stay
+within 0.3 W/m2.
+
+Exits non-zero if any snow-free land point's |residual| exceeds --tol-wm2
+(default 5.0 W/m2), or if the residual is NaN at any land point (snow or not)
+-- a NaN never counts as a pass. The per-site table (--out-csv) gives
+land-point means plus the worst snow-free point and its lat/lon;
+--per-point-csv writes the residual at every land point, e.g. for a map.
 Intended to run right after a raw ecLand run, before or alongside
 postproc_plumber2.py -- it reads o_efl.nc/o_gg.nc/o_fix.nc/o_vty.nc directly,
 none of which survive into the postprocessed PLUMBER2-schema files in the form
