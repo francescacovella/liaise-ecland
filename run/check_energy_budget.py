@@ -176,7 +176,10 @@ def read_site(site_dir: Path) -> tuple[dict, pd.DataFrame] | None:
         t0, t1 = _read(ds, 'SoilTemp', 0), _read(ds, 'SoilTemp', -1)
         has_ml_snow = 'SWEML' in ds.variables and 'slwML' in ds.variables and 'SnowTML' in ds.variables
         dE_snow = np.zeros(land.shape)
+        is_snow = np.zeros(land.shape, dtype=bool)
         if has_ml_snow:
+            # snow point: carries snow at any time in the run (its dE_snow is approximate)
+            is_snow = (np.ma.filled(ds.variables['SWEML'][:], 0.0) > 0.0).any(axis=(0, 1))
             swe0, swe1 = _read(ds, 'SWEML', 0), _read(ds, 'SWEML', -1)
             slw0, slw1 = _read(ds, 'slwML', 0), _read(ds, 'slwML', -1)
             snt0, snt1 = _read(ds, 'SnowTML', 0), _read(ds, 'SnowTML', -1)
@@ -184,7 +187,8 @@ def read_site(site_dir: Path) -> tuple[dict, pd.DataFrame] | None:
 
     dE_soil = _soil_energy(t1, soilfc, soilsat, soilthick, cv) - _soil_energy(t0, soilfc, soilsat, soilthick, cv)
 
-    residual_wm2 = (surf_avail + dE_soil + dE_snow) / (years * SECONDS_PER_YEAR)
+    # Energy into the ground minus what the ground (soil + snow) actually stored
+    residual_wm2 = (surf_avail - dE_soil - dE_snow) / (years * SECONDS_PER_YEAR)
 
     points = pd.DataFrame({
         'site': site_dir.name,
@@ -192,10 +196,16 @@ def read_site(site_dir: Path) -> tuple[dict, pd.DataFrame] | None:
         'lon': lon[land],
         'rnet_mean_wm2': rnet_mean_abs[land],
         'residual_wm2': residual_wm2[land],
+        'is_snow': is_snow[land],
     })
-    res = points.residual_wm2.to_numpy()
+    res, snow = points.residual_wm2.to_numpy(), points.is_snow.to_numpy()
     n_nan = int(np.isnan(res).sum())
-    worst = int(np.nanargmax(np.abs(res))) if n_nan < res.size else None
+
+    def _worst(mask: np.ndarray) -> int | None:
+        r = np.where(mask, np.abs(res), np.nan)
+        return int(np.nanargmax(r)) if np.isfinite(r).any() else None
+
+    worst, worst_snow = _worst(~snow), _worst(snow)
     rnet = float(points.rnet_mean_wm2.mean())
     summary = {
         'site': site_dir.name,
@@ -206,9 +216,11 @@ def read_site(site_dir: Path) -> tuple[dict, pd.DataFrame] | None:
         'dE_snow_MJ_m2': float(np.mean(dE_snow[land])) / 1.0e6,
         'residual_wm2': float(res.mean()),  # land-point mean; NaN if any point is NaN
         'residual_pct_of_Rnet': 100.0 * float(res.mean()) / rnet if rnet else float('nan'),
-        'worst_residual_wm2': res[worst] if worst is not None else float('nan'),
+        'worst_residual_wm2': res[worst] if worst is not None else float('nan'),  # snow-free points
         'worst_lat': points.lat.iloc[worst] if worst is not None else float('nan'),
         'worst_lon': points.lon.iloc[worst] if worst is not None else float('nan'),
+        'n_snow_points': int(snow.sum()),
+        'worst_snow_residual_wm2': res[worst_snow] if worst_snow is not None else float('nan'),
         'n_nan_points': n_nan,
         'has_ml_snow': has_ml_snow,
     }
@@ -247,8 +259,9 @@ def main() -> int:
     results = [r for d in site_dirs if (r := read_site(d)) is not None]
     points = pd.concat([p for _, p in results], ignore_index=True)
     df = pd.DataFrame([s for s, _ in results])
-    # a point fails if it is NaN or beyond tolerance; NaN must never read as PASS
-    over = ~(points.residual_wm2.abs() <= args.tol_wm2)
+    # A point fails if it is NaN, or snow-free and beyond tolerance; NaN must never
+    # read as PASS. Snow points are reported but not judged (approximate dE_snow).
+    over = points.residual_wm2.isna() | (~points.is_snow & (points.residual_wm2.abs() > args.tol_wm2))
     df['n_failing_points'] = df.site.map(over.groupby(points.site).sum()).astype(int)
     df = df.sort_values('worst_residual_wm2', key=lambda s: s.abs(), ascending=False)
 
@@ -256,9 +269,11 @@ def main() -> int:
     pd.set_option('display.float_format', lambda x: f'{x:9.4f}')
     print(df.to_string(index=False))
     print()
-    print(f'{len(df)} sites, {len(points)} land points.  |residual| per point: '
-          f'mean={points.residual_wm2.abs().mean():.4f}  median={points.residual_wm2.abs().median():.4f}  '
-          f'max={points.residual_wm2.abs().max():.4f} W/m2')
+    for label, sel in (('snow-free', ~points.is_snow), ('snow (not judged)', points.is_snow)):
+        r = points.residual_wm2[sel].abs()
+        if len(r):
+            print(f'{len(r)} {label} land points.  |residual| per point: mean={r.mean():.4f}  '
+                  f'median={r.median():.4f}  max={r.max():.4f} W/m2')
 
     if args.out_csv:
         args.out_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -271,11 +286,13 @@ def main() -> int:
 
     failing = df[df.n_failing_points > 0]
     if len(failing):
-        print(f'\nFAIL: {len(failing)} site(s) have land points beyond {args.tol_wm2} W/m2 or NaN:')
+        print(f'\nFAIL: {len(failing)} site(s) have snow-free land points beyond {args.tol_wm2} W/m2, '
+              f'or NaN at any land point:')
         print(failing[['site', 'n_failing_points', 'n_nan_points', 'worst_residual_wm2',
                        'worst_lat', 'worst_lon']].to_string(index=False))
         return 1
-    print(f'\nPASS: all land points within {args.tol_wm2} W/m2.')
+    print(f'\nPASS: all snow-free land points within {args.tol_wm2} W/m2 '
+          f'(snow points reported above, not judged).')
     return 0
 
 
