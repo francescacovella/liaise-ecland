@@ -100,8 +100,17 @@ def read_site(site_dir: Path) -> tuple[dict, pd.DataFrame] | None:
         daq = store_total('DelAquifer')
         has_aquifer_diag = 'Qrec' in ds.variables and 'DelAquifer' in ds.variables
 
+    # Open-water evaporation (tiles 1 + 9: sea water and lakes) is part of Evap but is
+    # drawn from ecLand's unlimited water body, not from any land store above.
+    ewater = np.zeros(land.shape)
+    eva_path = site_dir / 'o_eva.nc'
+    if eva_path.exists():
+        with Dataset(eva_path) as ds:
+            if 'EWater' in ds.variables:
+                ewater = np.sum(_read(ds, 'EWater'), axis=0) * dt
+
     precip = rainf + snowf
-    residual = precip + evap + qs + qsb - dint - dsm - dswe - daq
+    residual = precip + evap + qs + qsb - ewater - dint - dsm - dswe - daq
 
     points = pd.DataFrame({
         'site': site_dir.name,
@@ -118,6 +127,7 @@ def read_site(site_dir: Path) -> tuple[dict, pd.DataFrame] | None:
         'years': years,
         'n_points': int(land.sum()),
         'precip_mm_yr': float(p.mean()),
+        'ewater_mm_yr': float(np.mean(ewater[land])) / years,
         'residual_mm_yr': float(res.mean()),  # land-point mean; NaN if any point is NaN
         'residual_pct_of_P': 100.0 * float(res.mean()) / float(p.mean()) if p.mean() else float('nan'),
         'worst_residual_mm_yr': res[worst] if worst is not None else float('nan'),
